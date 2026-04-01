@@ -9,6 +9,9 @@
 
 O **Agent IR** é um experimento de contabilidade digital construído sob a premissa de privacidade total (Zero-Cloud). Ele processa arquivos e realiza análises preditivas utilizando modelos de linguagem pesados rodando exclusivamente na máquina do usuário.
 
+> 🚨 **RISCO DE VAZAMENTO VIA CLOUD SYNC**
+> Para garantir a premissa "Zero-Cloud", **NÃO instales** este projeto em pastas sincronizadas por serviços de backup automático (Google Drive, iCloud, OneDrive, Dropbox). Se o teu sistema operativo sincronizar o ficheiro SQLite (`data/irpf.db`), os teus dados financeiros estarão expostos na nuvem em texto claro.
+
 ---
 
 ## 🚀 Funcionalidades Atuais

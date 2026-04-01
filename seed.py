@@ -1,11 +1,15 @@
+import os
 from app.core.database import SessionLocal
 from app.models.entities import Contribuinte
 
 def seed_db():
     db = SessionLocal()
+    # CPF lido da variável de ambiente. Nunca deve estar hardcoded no código.
+    # Defina SEED_CPF=000.123.456-00 no seu .env antes de executar.
+    cpf_seguro = os.getenv("SEED_CPF", "000.000.000-00")
     if not db.query(Contribuinte).filter(Contribuinte.id == 1).first():
-        marcos = Contribuinte(id=1, nome="Usuario Padrao", cpf="000.000.000-00")
-        db.add(marcos)
+        usuario = Contribuinte(id=1, nome_completo="Usuario Padrao", cpf=cpf_seguro)
+        db.add(usuario)
         db.commit()
         print("✅ Contribuinte Marcos (ID: 1) criado com sucesso!")
     else:
