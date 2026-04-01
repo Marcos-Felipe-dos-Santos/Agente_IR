@@ -1,0 +1,11 @@
+Data do Negócio;Tipo de Movimentação;Código de Negociação;Quantidade;Preço;Valor da Operação;Instituição
+02/01/2025;Compra;PETR4;100;28,50;2.850,00;XP Investimentos
+05/01/2025;Compra;VALE3;50;68,90;3.445,00;XP Investimentos
+10/01/2025;Compra;PETR4;200;29,00;5.800,00;XP Investimentos
+15/01/2025;Venda;PETR4;150;31,00;4.650,00;XP Investimentos
+20/01/2025;Compra;ITUB4;300;R$ 32,50;R$ 9.750,00;Clear
+25/01/2025;Compra;VALE3;100;R$ 72,30;R$ 7.230,00;XP Investimentos
+28/01/2025;Venda;VALE3;80;75,00;6.000,00;XP Investimentos
+01/02/2025;Compra;WEGE3;50;35,20;1.760,00;XP Investimentos
+05/02/2025;Desdobramento;WEGE3;50;0,00;0,00;XP Investimentos
+10/02/2025;Venda;ITUB4;100;34,00;3.400,00;Clear
