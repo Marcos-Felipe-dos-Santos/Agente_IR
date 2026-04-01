@@ -1,82 +1,52 @@
-🛡️ Agent IR — Versão 1.0
-Inteligência Artificial Local & Auditoria Fiscal Determinística
-O Agent IR é um ecossistema de contabilidade digital desenvolvido por Marcos, estudante de Ciência da Computação, focado em privacidade absoluta e precisão fiscal para o IRPF (Ano-base 2024 / Exercício 2025). Ao contrário de soluções em nuvem, o Agent IR processa dados sensíveis (PDFs bancários, holerites e notas de corretagem) inteiramente em ambiente local.
+# 🛡️ Agent IR — Ferramenta Experimental de Análise Fiscal (Local-First)
 
-O projeto une o rigor matemático do Python para cálculos tributários complexos com o raciocínio profundo de modelos de linguagem de larga escala (DeepSeek-R1) rodando localmente via Ollama.
+> **⚠️ AVISO IMPORTANTE DE RESPONSABILIDADE E ESCOPO**
+> Este é um **projeto acadêmico e pessoal** de Ciência da Computação, focado em explorar a interseção entre algoritmos determinísticos (cálculo de IR) e Inferência de IA Local (LLMs). 
+> * **NÃO é um produto comercial ou SaaS.**
+> * **NÃO substitui um contador profissional.** O motor tributário pode conter bugs e não cobre todos os cenários complexos da B3 (como day-trade, bonificações, subscrições ou FIIs).
+> * **NÃO possui integração real com a Receita Federal.** O módulo de auditoria funciona através de importação manual de dados (arquivos mock/JSON), pois não há acesso direto à API do e-CAC.
+> * O usuário é o único responsável por conferir os valores no Programa Gerador da DIRPF oficial.
 
-🚀 Funcionalidades Principais
-Motor de Renda Variável (B3): Cálculo automatizado de Preço Médio Ponderado, compensação de prejuízos intermensais e controle de isenção de R$ 20 mil para ações.
+O **Agent IR** é um experimento de contabilidade digital construído sob a premissa de privacidade total (Zero-Cloud). Ele processa arquivos e realiza análises preditivas utilizando modelos de linguagem pesados rodando exclusivamente na máquina do usuário.
 
-Radar de Criptoativos: Monitoramento do teto de isenção de R$ 35 mil para alienações de moedas digitais.
+---
 
-Parser de PDF com Regex: Extração inteligente de dados em Informes de Rendimentos Bancários e Holerites (Trabalho Assalariado), incluindo captura "gulosa" de despesas médicas e planos de saúde no Quadro 7.
+## 🚀 Funcionalidades Atuais
 
-Conselheiro Fiscal IA (Offline): Integração assíncrona com o Ollama (deepseek-r1:14b) para gerar estratégias de elisão fiscal e simulação entre Modelo Completo e Simplificado.
+* **Motor Determinístico (B3)**: Algoritmo em Python para cálculo de Preço Médio Ponderado e compensação de prejuízos intermensais focado no cenário básico de Swing Trade de Ações.
+* **Parser de PDFs (Experimental)**: Extração de dados de notas de corretagem e informes de rendimentos via Regex. *(Atenção: Atualmente otimizado para layouts sintéticos/específicos. Pode falhar em PDFs reais de bancos devido à variação de formatação).*
+* **Conselheiro Fiscal IA (Opcional)**: Integração com o Ollama (`deepseek-r1:14b`) para gerar insights fiscais. Requer hardware de alta performance.
+* **Dossiê Analítico**: Geração de PDFs vetoriais via `ReportLab` com a memória de cálculo.
 
-Auditor Anti-Malha Fina: Comparação automática entre os dados locais e a Declaração Pré-Preenchida da Receita Federal, apontando divergências em tempo real.
+---
 
-Análise de Variação Patrimonial: Verificação de consistência entre a renda líquida declarada e a evolução de bens e direitos entre 31/12/2023 e 31/12/2024.
+## 💻 Requisitos de Hardware e Setup
 
-Dossiê Executivo (PDF): Geração de relatório técnico via ReportLab, consolidando memória de cálculo, gráficos de evolução e o parecer da IA.
+Devido à natureza *Local-First* e ao uso de IA Generativa profunda, este projeto **exige hardware entusiasta** para uma experiência fluida.
 
-💻 Stack Tecnológica
-Back-End (O Motor)
-FastAPI: Framework assíncrono de alta performance.
+* **Recomendado para o Módulo de IA**: GPU Dedicada com **8GB a 16GB de VRAM** (ex: NVIDIA RTX 4060 Ti ou superior) e 32GB de RAM.
+* *Nota: Rodar a IA apenas em CPU resultará em latências severas (5 a 15 minutos por requisição).*
 
-SQLAlchemy: ORM para gestão de dados em SQLite local.
+### Stack Tecnológica
+* **Back-End**: Python 3.10+, FastAPI (Assíncrono), SQLAlchemy.
+* **Front-End**: React, Vite, Recharts.
+* **IA Local**: Ollama.
 
-Httpx: Cliente HTTP assíncrono para comunicação com Ollama com timeout de 15 minutos.
+### Como Executar (Ambiente de Desenvolvimento)
 
-Pdfplumber & Regex: Engenharia de extração de dados não estruturados em PDFs.
-
-ReportLab: Geração de documentos PDF vetoriais em tempo real.
-
-Front-End (A Interface)
-React + Vite: Interface reativa e performática.
-
-Recharts: Visualização de dados e evolução patrimonial.
-
-Axios: Integração com a API local.
-
-IA Local
-Ollama: Orquestração de LLMs locais.
-
-DeepSeek-R1 (14B/32B): Modelo utilizado para raciocínio lógico-fiscal.
-
-🛠️ Como Executar
-1. Pré-requisitos
-Python 3.10+
-
-Node.js & npm
-
-Ollama instalado e rodando o modelo deepseek-r1:14b.
-
-2. Configuração do Back-End
-Bash
-# Ativar ambiente virtual
-.\venv\Scripts\activate
-
-# Instalar dependências
+```bash
+# 1. Back-End
+python -m venv venv
+source venv/bin/activate  # ou .\venv\Scripts\activate no Windows
 pip install -r requirements.txt
-
-# Inicializar o banco de dados (Seed)
-python seed.py
-
-# Iniciar o servidor
+python seed.py  # Atenção: Cria banco SQLite local (Não criptografado)
 uvicorn app.main:app --reload --port 8000
-3. Configuração do Front-End
-Bash
+
+# 2. Front-End (Em outro terminal)
 cd frontend-agente
 npm install
 npm run dev
-🔒 Compromisso com a Privacidade
-Toda a arquitetura do Agent IR foi desenhada sob a premissa de que dados financeiros não devem sair da máquina do usuário.
 
-Os PDFs são lidos em memória (Zero-Leak).
-
-A IA roda offline via porta 11434.
-
-O banco de dados SQLite é criptografado pelo próprio sistema de arquivos local.
-
-⚖️ Isenção de Responsabilidade
-Este é um projeto acadêmico e experimental desenvolvido para fins de estudo de Ciência da Computação. O Agent IR não substitui a orientação de um contador profissional ou a conferência manual dos dados no programa oficial da Receita Federal.
+# 3. Motor de IA (Opcional)
+# Certifique-se de ter o Ollama instalado e rodando:
+ollama run deepseek-r1:14b
