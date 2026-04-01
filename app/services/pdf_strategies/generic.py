@@ -280,3 +280,11 @@ class GenericParserStrategy(BankParserStrategy):
                         valor_pago=valor,
                     ))
         return despesas
+
+
+# ─── Alias standalone para testabilidade ──────────────────────────────────────
+
+def _extract_saldos_from_text(text: str) -> list[SaldoExtraido]:
+    """Wrapper standalone de extract_saldos para uso em testes."""
+    return GenericParserStrategy().extract_saldos(text)
+
