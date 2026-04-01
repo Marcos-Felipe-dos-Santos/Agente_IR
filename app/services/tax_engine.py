@@ -15,7 +15,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.entities import AtivoCripto, Contribuinte, OperacaoB3
+from app.models.entities import AtivoCripto, Contribuinte, OperacaoB3, RendimentoTrabalho, DespesaMedica, ContaBancaria, RendimentoInforme
 
 logger = logging.getLogger(__name__)
 
@@ -252,3 +252,174 @@ def auditar_cripto_vendas(contribuinte_id: int, ano_base: int, db: Session) -> l
                 })
 
     return alertas
+
+def auditar_trabalho_saude(contribuinte_id: int, ano_base: int, db: Session) -> dict | None:
+    """Busca folha salarial e despesas médicas para compor os rendimentos globais."""
+    trabalhos = db.scalars(
+        select(RendimentoTrabalho)
+        .where(
+            RendimentoTrabalho.contribuinte_id == contribuinte_id,
+            RendimentoTrabalho.ano_calendario == ano_base
+        )
+    ).all()
+    
+    saudes = db.scalars(
+        select(DespesaMedica)
+        .where(
+            DespesaMedica.contribuinte_id == contribuinte_id,
+            DespesaMedica.ano_calendario == ano_base
+        )
+    ).all()
+    
+    if not trabalhos and not saudes:
+        return None
+        
+    tot_trib = Decimal("0")
+    tot_inss = Decimal("0")
+    tot_irrf = Decimal("0")
+    tot_saude = Decimal("0")
+    
+    for t in trabalhos:
+        tot_trib += t.rendimento_tributavel
+        tot_inss += t.contribuicao_previdenciaria
+        tot_irrf += t.irrf
+        
+    for s in saudes:
+        tot_saude += s.valor_pago
+        
+    return {
+        "total_rendimento_tributavel": str(tot_trib.quantize(TWO_PLACES)),
+        "total_inss_pago": str(tot_inss.quantize(TWO_PLACES)),
+        "total_irrf_retido": str(tot_irrf.quantize(TWO_PLACES)),
+        "total_despesas_medicas": str(tot_saude.quantize(TWO_PLACES))
+    }
+
+def avaliar_variacao_patrimonial(contribuinte_id: int, ano_base: int, db: Session) -> dict:
+    # 1. BENS BANCÁRIOS E CORRETORAS
+    contas = db.scalars(
+        select(ContaBancaria)
+        .where(ContaBancaria.contribuinte_id == contribuinte_id, ContaBancaria.ano_referencia == ano_base)
+    ).all()
+    
+    bens_bancarios_anterior = sum((c.saldo_31_12_anterior for c in contas), Decimal("0"))
+    bens_bancarios_atual = sum((c.saldo_31_12_atual for c in contas), Decimal("0"))
+
+    # 2. B3 (Replay de Custo de Aquisição)
+    ops_b3 = db.scalars(
+        select(OperacaoB3)
+        .where(OperacaoB3.contribuinte_id == contribuinte_id)
+        .order_by(OperacaoB3.data_operacao.asc(), OperacaoB3.id.asc())
+    ).all()
+
+    b3_anterior = Decimal("0")
+    b3_atual = Decimal("0")
+    
+    estado_b3_anterior = {}
+    estado_b3_atual = {}
+    
+    for op in ops_b3:
+        y = op.data_operacao.year
+        t = op.ticker
+        # Calculo State
+        def update_state(state_dict):
+            if t not in state_dict:
+                state_dict[t] = PrecoMedioState(ticker=t)
+            if op.tipo_operacao == "compra":
+                state_dict[t].operacao_compra(op.quantidade, op.preco_unitario, op.custos_operacionais)
+            elif op.tipo_operacao == "venda":
+                state_dict[t].operacao_venda(op.quantidade, op.preco_unitario, op.custos_operacionais)
+        
+        if y < ano_base:
+            update_state(estado_b3_anterior)
+            
+        if y <= ano_base:
+            update_state(estado_b3_atual)
+            
+    # Patrimonio eh Qtd * PrecoMedio (Ou seja, Custo de Aquisição total em carteira)
+    b3_anterior = sum((s.custo_acumulado for s in estado_b3_anterior.values()), Decimal("0"))
+    b3_atual = sum((s.custo_acumulado for s in estado_b3_atual.values()), Decimal("0"))
+
+    # 3. CRIPTOATIVOS (Custo de Aquisição)
+    ops_cripto = db.scalars(
+        select(AtivoCripto)
+        .where(AtivoCripto.contribuinte_id == contribuinte_id)
+        .order_by(AtivoCripto.data_operacao.asc(), AtivoCripto.id.asc())
+    ).all()
+
+    estado_cripto_anterior = {}
+    estado_cripto_atual = {}
+    
+    for op in ops_cripto:
+        y = op.data_operacao.year
+        t = op.moeda
+        def update_c(state_dict):
+            if t not in state_dict:
+                state_dict[t] = PrecoMedioState(ticker=t)
+            if op.tipo_operacao == "compra":
+                state_dict[t].operacao_compra(op.quantidade, op.preco_unitario_brl, Decimal("0"))
+            elif op.tipo_operacao == "venda":
+                state_dict[t].operacao_venda(op.quantidade, op.preco_unitario_brl, Decimal("0"))
+                
+        if y < ano_base:
+             update_c(estado_cripto_anterior)
+        if y <= ano_base:
+             update_c(estado_cripto_atual)
+             
+    c_anterior = sum((s.custo_acumulado for s in estado_cripto_anterior.values()), Decimal("0"))
+    c_atual = sum((s.custo_acumulado for s in estado_cripto_atual.values()), Decimal("0"))
+    
+    # MATEMATICA FINAL - Patrimonio e Variação
+    total_anterior = bens_bancarios_anterior + b3_anterior + c_anterior
+    total_atual = bens_bancarios_atual + b3_atual + c_atual
+    variacao_nominal = total_atual - total_anterior
+    perc = Decimal("0")
+    if total_anterior > 0:
+        perc = (variacao_nominal / total_anterior) * Decimal("100")
+        
+    e_pat = {
+        "bens_bancarios_anterior": str(bens_bancarios_anterior.quantize(TWO_PLACES)),
+        "bens_bancarios_atual": str(bens_bancarios_atual.quantize(TWO_PLACES)),
+        "b3_anterior": str(b3_anterior.quantize(TWO_PLACES)),
+        "b3_atual": str(b3_atual.quantize(TWO_PLACES)),
+        "cripto_anterior": str(c_anterior.quantize(TWO_PLACES)),
+        "cripto_atual": str(c_atual.quantize(TWO_PLACES)),
+        "total_anterior": str(total_anterior.quantize(TWO_PLACES)),
+        "total_atual": str(total_atual.quantize(TWO_PLACES)),
+        "variacao_nominal": str(variacao_nominal.quantize(TWO_PLACES)),
+        "variacao_percentual": str(perc.quantize(TWO_PLACES))
+    }
+
+    # MATEMATICA FLUXO DE CAIXA JUSTIFICADO
+    rendimentos_informe = db.scalars(
+        select(RendimentoInforme)
+        .where(RendimentoInforme.contribuinte_id == contribuinte_id, RendimentoInforme.ano_calendario == ano_base)
+    ).all()
+    
+    trabalhos = db.scalars(select(RendimentoTrabalho).where(RendimentoTrabalho.contribuinte_id == contribuinte_id, RendimentoTrabalho.ano_calendario == ano_base)).all()
+    saudes = db.scalars(select(DespesaMedica).where(DespesaMedica.contribuinte_id == contribuinte_id, DespesaMedica.ano_calendario == ano_base)).all()
+    
+    rend_liquido = sum(((r.valor - r.irrf) for r in rendimentos_informe), Decimal("0"))
+    rend_liquido += sum(((t.rendimento_tributavel - t.contribuicao_previdenciaria - t.irrf) for t in trabalhos), Decimal("0"))
+    
+    desp_saude = sum((s.valor_pago for s in saudes), Decimal("0"))
+    
+    caixa_disp = rend_liquido - desp_saude
+    
+    # A Variação não pode ser matematicamente maior que o caixa liquido. 
+    # (Ou seja, ele não tem dinheiro no ano para justificar a compra desse patrimônio que ele disse ter no D-Bens)
+    renda_descoberta = variacao_nominal > caixa_disp
+    
+    msg = "Variação Patrimonial matematicamente compatível com a renda adquirida no ano-base."
+    if renda_descoberta:
+        msg = f"AUMENTO PATRIMONIAL A DESCOBERTO! Patrimonio aumentou R$ {variacao_nominal:,.2f}, mas sobrou apenas R$ {caixa_disp:,.2f} no ano. Risco máximo de Malha Fina e Auto de Infração."
+        
+    f_caixa = {
+        "rendimentos_totais_liquidos": str(rend_liquido.quantize(TWO_PLACES)),
+        "aumento_patrimonial": str(variacao_nominal.quantize(TWO_PLACES)),
+        "despesas_dedutiveis": str(desp_saude.quantize(TWO_PLACES)),
+        "caixa_disponivel": str(caixa_disp.quantize(TWO_PLACES)),
+        "renda_descoberta": bool(renda_descoberta),
+        "mensagem_alerta": msg
+    }
+
+    return {"evolucao_patrimonial": e_pat, "fluxo_caixa": f_caixa}

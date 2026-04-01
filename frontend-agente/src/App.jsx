@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { uploadB3, uploadInforme, getApuracao } from "./services/api";
+import { uploadB3, uploadInforme, getApuracao, gerarEstrategiasIA, baixarDossiePDF, cruzarAuditoriaReceita, gerarDefesaIA } from "./services/api";
+import { BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from "recharts";
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 const fmt = (n) =>
@@ -135,6 +136,15 @@ export default function IRApp() {
   const [declaration, setDeclaration] = useState("");
   const [genLoading, setGenLoading] = useState(false);
   const [progressMsg, setProgressMsg] = useState("");
+  const [lastApuracaoData, setLastApuracaoData] = useState(null);
+  const [aiReport, setAiReport] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [pdfLoading, setPdfLoading] = useState(false);
+
+  const [malhaData, setMalhaData] = useState(null);
+  const [malhaLoading, setMalhaLoading] = useState(false);
+  const [malhaIA, setMalhaIA] = useState("");
+  const [malhaIALoading, setMalhaIALoading] = useState(false);
 
   const addFiles = useCallback((newFiles) => {
     setFiles((prev) => {
@@ -171,6 +181,7 @@ export default function IRApp() {
 
       // 2. Extrair Apuração local
       const data = await getApuracao(1, 2024);
+      setLastApuracaoData(data);
 
       // 3. Formatar o Markdown Matemático
       let md = `## RELATÓRIO DE APURAÇÃO IRPF 2025 — ANO-BASE 2024\n`;
@@ -212,11 +223,96 @@ export default function IRApp() {
     }
   };
 
+  const handleConselheiroIA = async () => {
+    if (!lastApuracaoData) return;
+    setAiLoading(true);
+    setAiReport("");
+    try {
+      const resp = await gerarEstrategiasIA(lastApuracaoData, "deepseek-r1:14b");
+      setAiReport(resp);
+    } catch (err) {
+      console.error(err);
+      setAiReport(`### ❌ Erro de Comunicação\n\nA IA Local não respondeu. Certifique-se de que o Ollama está rodando e o modelo \`deepseek-r1:14b\` foi baixado.\n\nDetalhe: ${err.message}`);
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const handleDownloadPDF = async () => {
+    if (!lastApuracaoData) return;
+    setPdfLoading(true);
+    try {
+      const parecer = aiReport || "Consultoria Local Desabilitada ou Omitida para este processamento.";
+      const blob = await baixarDossiePDF(1, 2024, parecer);
+      const url = window.URL.createObjectURL(new Blob([blob]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'Dossie_IRPF_2024.pdf');
+      document.body.appendChild(link);
+      link.click();
+      link.parentNode.removeChild(link);
+    } catch (err) {
+      console.error(err);
+      alert("Falha de Comunicação ao Gerar PDF. Verifique se o Back-End está online.");
+    } finally {
+      setPdfLoading(false);
+    }
+  };
+
+  const handleAuditarReceita = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    setMalhaLoading(true);
+    setMalhaData(null);
+    setMalhaIA("");
+    
+    try {
+      const text = await file.text();
+      const jsonObj = JSON.parse(text);
+      const resp = await cruzarAuditoriaReceita(1, 2024, jsonObj);
+      setMalhaData(resp);
+    } catch (err) {
+      console.error(err);
+      alert("Falha ao analisar JSON da Receita: " + err.message);
+    } finally {
+      setMalhaLoading(false);
+      event.target.value = null; // reset input
+    }
+  };
+
+  const handleGerarDefesaIA = async () => {
+    if (!malhaData) return;
+    setMalhaIALoading(true);
+    setMalhaIA("");
+    try {
+      const resp = await gerarDefesaIA(1, 2024, malhaData, "deepseek-r1:14b");
+      setMalhaIA(resp);
+    } catch (err) {
+      setMalhaIA("### ❌ Erro na IA de Contencioso\\n" + err.message);
+    } finally {
+      setMalhaIALoading(false);
+    }
+  };
+
 
   const TABS = [
     { id: "dados", label: "① Dados", sub: "Importar & Processar" },
     { id: "declaracao", label: "② Apuração e Impostos", sub: "Relatório Anual Local" },
+    { id: "auditoria", label: "③ Auditoria (Malha Fina)", sub: "Cruzar Gov.BR" },
+    { id: "evolucao", label: "④ Evolução Patrimonial", sub: "Risco de Renda a Descoberto" },
   ];
+
+  // Helper for Chart Data
+  const getChartData = () => {
+    if (!lastApuracaoData?.evolucao_patrimonial) return [];
+    const ev = lastApuracaoData.evolucao_patrimonial;
+    return [
+      { name: "Saldos Bancários", "Ano Anterior": parseFloat(ev.bens_bancarios_anterior), "Ano Atual": parseFloat(ev.bens_bancarios_atual) },
+      { name: "Ações & B3", "Ano Anterior": parseFloat(ev.b3_anterior), "Ano Atual": parseFloat(ev.b3_atual) },
+      { name: "Criptoativos", "Ano Anterior": parseFloat(ev.cripto_anterior), "Ano Atual": parseFloat(ev.cripto_atual) }
+    ];
+  };
 
   return (
     <div className="app">
@@ -303,6 +399,9 @@ export default function IRApp() {
                 <div className="gen-toolbar">
                   <span className="gen-label">📊 Relatório Consolidado de Apuração</span>
                   <div style={{ display: "flex", gap: 8 }}>
+                    <button className="btn btn-primary btn-sm" onClick={handleDownloadPDF} disabled={pdfLoading}>
+                      {pdfLoading ? "Compilando PDF..." : "📄 Baixar Dossiê Fiscal"}
+                    </button>
                     <button className="btn btn-secondary btn-sm" onClick={() => {
                       navigator.clipboard.writeText(declaration);
                     }}>⎘ Copiar Markup</button>
@@ -311,9 +410,170 @@ export default function IRApp() {
                 <div className="gen-notice">
                   ℹ️ Apuração calculada deterministicamente baseada nos arquivos ingeridos pelo motor do Agent IR.
                 </div>
-                <div className="gen-body"><MD text={declaration} /></div>
+                <div className="gen-body">
+                  <MD text={declaration} />
+                  
+                  {/* SEÇÃO DA IA NATIVA */}
+                  <div style={{ marginTop: 40, paddingTop: 30, borderTop: "1px dashed #18283a" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+                      <span style={{ fontSize: "14px", color: "#d4c070", fontWeight: "bold" }}>🧠 Conselheiro Fiscal Nativo (LLM)</span>
+                      <button 
+                        className="btn btn-primary btn-sm" 
+                        onClick={handleConselheiroIA} 
+                        disabled={aiLoading}
+                      >
+                        {aiLoading ? "Consultando IA Local (Isso levará minutos)..." : "⚡ Consultar Especialista IA (Offline)"}
+                      </button>
+                    </div>
+
+                    {aiLoading && (
+                      <div className="gen-loading" style={{ margin: "40px 0" }}>
+                        <div className="spinner" />
+                        <p style={{ maxWidth: 400, textAlign: "center", lineHeight: 1.5 }}>
+                          O modelo *deepseek-r1:14b* está processando o relatório na sua máquina física. Em hardwares padrões, 
+                          inferências densas off-line demoram alguns minutos devido à restrição de VRAM. Não feche a página...
+                        </p>
+                      </div>
+                    )}
+
+                    {aiReport && !aiLoading && (
+                      <div style={{ background: "#080c10", border: "1px solid #b8872a40", borderRadius: 8, padding: "24px", marginTop: "16px", boxShadow: "inset 0 0 20px #b8872a08" }}>
+                        <MD text={aiReport} />
+                      </div>
+                    )}
+                  </div>
+
+                </div>
               </div>
             )}
+          </div>
+        )}
+        
+        {/* ── AUDITORIA DA MALHA FINA (RECEITA VS LOCAL) ── */}
+        {tab === "auditoria" && (
+          <div className="gen-layout">
+            <div className="gen-body">
+              <h2 className="md-h2">🛡️ Verificação de Malha Fina (Contencioso)</h2>
+              <p className="md-p">
+                Faça o upload do seu JSON <strong>Pré-Preenchida do e-CAC</strong> para confrontá-lo milimetricamente com a base local extraída dos seus PDFs e corretoras.
+              </p>
+              
+              <div style={{ margin: "20px 0" }}>
+                <input type="file" accept=".json" id="receitaUpload" style={{ display: 'none' }} onChange={handleAuditarReceita} />
+                <button className="btn btn-primary" onClick={() => document.getElementById('receitaUpload').click()} disabled={malhaLoading}>
+                  {malhaLoading ? "Cruzando Dados..." : "📂 Importar JSON gov.br"}
+                </button>
+              </div>
+
+              {malhaData && (
+                <div style={{ marginTop: 30 }}>
+                  <div className="gen-notice" style={{ color: malhaData.risco_malha_fina_alto ? '#ff5050' : '#50ff50', fontWeight: "bold" }}>
+                     {malhaData.resumo_analise}
+                  </div>
+                  
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 20 }}>
+                    {malhaData.divergencias.map((div, i) => (
+                       <div key={i} style={{ padding: 16, borderRadius: 8, background: "#10151a", borderLeft: `4px solid ${div.status.includes('DIVERGENTE') || div.status.includes('CRITICO') ? '#ff4040' : '#40ff40'}` }}>
+                          <strong style={{ color: "#d4c070" }}>[{div.categoria}] {div.nome_item}</strong>
+                          <p style={{ margin: "6px 0", fontSize: 13, color: "#a0b8c8" }}>{div.mensagem}</p>
+                          <div style={{ display: "flex", gap: 20, fontSize: 11, marginTop: 10, color: "#607080" }}>
+                             <span>Receita Exige: R$ {div.valor_declarado_receita}</span>
+                             <span>Agent IR Leu: R$ {div.valor_apurado_sistema}</span>
+                             <span style={{ color: div.impacto_financeiro.includes('-') ? '#ff6060' : '#60ff60' }}>Impacto: {div.impacto_financeiro}</span>
+                          </div>
+                       </div>
+                    ))}
+                  </div>
+
+                  <div style={{ marginTop: 40, paddingTop: 30, borderTop: "1px dashed #18283a" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+                      <span style={{ fontSize: "14px", color: "#d4c070", fontWeight: "bold" }}>🧠 Auditoria Processual (Defesa de Malha Fina via IA Especialista)</span>
+                      <button className="btn btn-secondary btn-sm" onClick={handleGerarDefesaIA} disabled={malhaIALoading}>
+                        {malhaIALoading ? "Elaborando Argumentação Jurídica..." : "⚖️ Gerar Dossiê de Defesa IA"}
+                      </button>
+                    </div>
+                    {malhaIA && !malhaIALoading && (
+                      <div style={{ background: "#1a0808", border: "1px solid #401010", borderRadius: 8, padding: "24px", marginTop: "16px" }}>
+                        <MD text={malhaIA} />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── EVOLUÇÃO E RESUMO ── */}
+        {tab === "evolucao" && (
+          <div className="gen-layout">
+            <div className="gen-body">
+              <h2 className="md-h2">📈 Evolução de Bens e Renda a Descoberto</h2>
+              <p className="md-p">
+                A Receita Federal cruza o ganho de patrimônio contra a sua renda orgânica. Se o patrimônio aumenta mais do que seus ganhos menos suas despesas, um Alerta de Malha Fina é acionado preventivamente.
+              </p>
+
+              {!lastApuracaoData && (
+                <div style={{ padding: 20, textAlign: "center", color: "#8090a0" }}>Apuracão não gerada. Volte à Aba ①.</div>
+              )}
+
+              {lastApuracaoData && lastApuracaoData.evolucao_patrimonial && (
+                <div style={{ marginTop: 24 }}>
+                  <div style={{ height: 300, background: "#0b0e13", border: "1px solid #14202e", borderRadius: 8, padding: "20px 20px 0 0" }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={getChartData()} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
+                        <XAxis dataKey="name" stroke="#607080" fontSize={11} tickMargin={10} />
+                        <YAxis stroke="#607080" fontSize={11} tickFormatter={(v) => `R$ ${(v/1000).toFixed(0)}k`} />
+                        <RechartsTooltip 
+                          contentStyle={{ backgroundColor: "#10151a", border: "1px solid #1e2838", borderRadius: 4, color: "#d4c070", fontSize: 12 }}
+                          itemStyle={{ color: "#a0b8c8" }}
+                          formatter={(value) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value)}
+                        />
+                        <Legend wrapperStyle={{ fontSize: 11, paddingTop: 10 }} />
+                        <Bar dataKey="Ano Anterior" fill="#243040" radius={[4, 4, 0, 0]} />
+                        <Bar dataKey="Ano Atual" fill="#b8872a" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: 20, marginTop: 20 }}>
+                    <div style={{ flex: 1, padding: 20, background: "#090c11", border: "1px solid #14202e", borderRadius: 8 }}>
+                      <span style={{ fontSize: 10, color: "#8090a0", textTransform: "uppercase", letterSpacing: 1 }}>Evolução Nominal</span>
+                      <div style={{ fontSize: 24, color: "#d4c070", margin: "8px 0" }}>
+                        R$ {lastApuracaoData.evolucao_patrimonial.variacao_nominal}
+                      </div>
+                      <span style={{ fontSize: 11, color: lastApuracaoData.evolucao_patrimonial.variacao_percentual > 0 ? "#50ff50" : "#ff5050" }}>
+                        {(parseFloat(lastApuracaoData.evolucao_patrimonial.variacao_percentual) >= 0 ? "+" : "")}{lastApuracaoData.evolucao_patrimonial.variacao_percentual}% vs {2024 - 1}
+                      </span>
+                    </div>
+                  </div>
+
+                  {lastApuracaoData.fluxo_caixa && (
+                    <div style={{ marginTop: 24 }}>
+                       <h3 className="md-h3">Cálculo de Fluxo de Caixa Justificado</h3>
+                       <div className="gen-notice" style={{ color: lastApuracaoData.fluxo_caixa.renda_descoberta ? '#ff4040' : '#40ff40', fontWeight: 'bold' }}>
+                          {lastApuracaoData.fluxo_caixa.mensagem_alerta}
+                       </div>
+                       
+                       <div className="md-table-wrap">
+                        <table className="md-table">
+                          <thead>
+                            <tr><th>Rubrica Legal</th><th>Valor Declarado</th></tr>
+                          </thead>
+                          <tbody>
+                            <tr><td>➕ Rendimentos Líquidos Totais (Isentos + Tributáveis)</td><td>R$ {lastApuracaoData.fluxo_caixa.rendimentos_totais_liquidos}</td></tr>
+                            <tr><td>➖ Despesas e Gastos (Saúde, INSS e Gastos Gerais)</td><td>- R$ {lastApuracaoData.fluxo_caixa.despesas_dedutiveis}</td></tr>
+                            <tr><td><strong>🟰 Caixa Sobrante Justificado</strong></td><td><strong>R$ {lastApuracaoData.fluxo_caixa.caixa_disponivel}</strong></td></tr>
+                            <tr><td><span style={{color: '#d4c070'}}>📈 Aumento Patrimonial (Declarado em Bens Constatados)</span></td><td><span style={{color: '#d4c070'}}>R$ {lastApuracaoData.fluxo_caixa.aumento_patrimonial}</span></td></tr>
+                          </tbody>
+                        </table>
+                       </div>
+                    </div>
+                  )}
+
+                </div>
+              )}
+            </div>
           </div>
         )}
       </main>

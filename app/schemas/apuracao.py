@@ -30,6 +30,33 @@ class AlertaCripto(BaseModel):
     mensagem: str
 
 
+class RendimentoTrabalhoAgregado(BaseModel):
+    """Agregação anual das informações de previdência, IRPF e Saúde."""
+    total_rendimento_tributavel: str
+    total_inss_pago: str
+    total_irrf_retido: str
+    total_despesas_medicas: str
+
+class EvolucaoPatrimonial(BaseModel):
+    bens_bancarios_anterior: str
+    bens_bancarios_atual: str
+    b3_anterior: str
+    b3_atual: str
+    cripto_anterior: str
+    cripto_atual: str
+    total_anterior: str
+    total_atual: str
+    variacao_nominal: str
+    variacao_percentual: str
+
+class FluxoCaixa(BaseModel):
+    rendimentos_totais_liquidos: str
+    aumento_patrimonial: str
+    despesas_dedutiveis: str
+    caixa_disponivel: str
+    renda_descoberta: bool
+    mensagem_alerta: str
+
 class RelatorioAnualBase(BaseModel):
     """Agrega o ano inteiro e apura IR."""
     model_config = ConfigDict(strict=False)
@@ -42,4 +69,6 @@ class RelatorioAnualBase(BaseModel):
     total_imposto_devido_ano: str
     saldo_prejuizo_a_compensar_final_ano: str
     alertas_cripto: List[AlertaCripto]
-
+    dados_trabalho_assalariado_e_saude: RendimentoTrabalhoAgregado | None = None
+    evolucao_patrimonial: EvolucaoPatrimonial | None = None
+    fluxo_caixa: FluxoCaixa | None = None

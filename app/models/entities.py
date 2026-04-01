@@ -61,6 +61,12 @@ class Contribuinte(Base):
     rendimentos_informe: Mapped[list["RendimentoInforme"]] = relationship(
         back_populates="contribuinte", cascade="all, delete-orphan"
     )
+    rendimentos_trabalho: Mapped[list["RendimentoTrabalho"]] = relationship(
+        back_populates="contribuinte", cascade="all, delete-orphan"
+    )
+    despesas_medicas: Mapped[list["DespesaMedica"]] = relationship(
+        back_populates="contribuinte", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         UniqueConstraint("cpf", "ano_exercicio", name="uq_cpf_ano"),
@@ -299,4 +305,71 @@ class RendimentoInforme(Base):
             name="ck_categoria_rendimento",
         ),
         CheckConstraint("valor >= 0", name="ck_valor_rendimento_positivo"),
+    )
+
+
+# ── Rendimento de Trabalho Assalariado ──────────────────────────────
+class RendimentoTrabalho(Base):
+    """
+    Rendimentos do Trabalho Assalariado.
+    Extraído de Informes de Rendimento do tipo holerite.
+    """
+
+    __tablename__ = "rendimentos_trabalho"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    contribuinte_id: Mapped[int] = mapped_column(
+        ForeignKey("contribuintes.id", ondelete="CASCADE"), nullable=False
+    )
+    cnpj_fonte: Mapped[str] = mapped_column(String(18), nullable=False)
+    razao_social_fonte: Mapped[str] = mapped_column(String(200), nullable=False)
+    ano_calendario: Mapped[int] = mapped_column(nullable=False)
+    
+    rendimento_tributavel: Mapped[Decimal] = mapped_column(
+        Numeric(15, 2), nullable=False, default=Decimal("0.00")
+    )
+    contribuicao_previdenciaria: Mapped[Decimal] = mapped_column(
+        Numeric(15, 2), nullable=False, default=Decimal("0.00")
+    )
+    irrf: Mapped[Decimal] = mapped_column(
+        Numeric(15, 2), nullable=False, default=Decimal("0.00")
+    )
+
+    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    contribuinte: Mapped["Contribuinte"] = relationship(
+        back_populates="rendimentos_trabalho"
+    )
+
+
+# ── Despesas Médicas (Instrução/Saúde) ─────────────────────────────
+class DespesaMedica(Base):
+    """
+    Despesas médicas ou de saúde reportadas em 'Informações Complementares'.
+    """
+
+    __tablename__ = "despesas_medicas"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    contribuinte_id: Mapped[int] = mapped_column(
+        ForeignKey("contribuintes.id", ondelete="CASCADE"), nullable=False
+    )
+    cnpj_prestador: Mapped[str] = mapped_column(String(18), nullable=False)
+    razao_social_prestador: Mapped[str] = mapped_column(String(200), nullable=False)
+    ano_calendario: Mapped[int] = mapped_column(nullable=False)
+    
+    valor_pago: Mapped[Decimal] = mapped_column(
+        Numeric(15, 2), nullable=False
+    )
+
+    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    contribuinte: Mapped["Contribuinte"] = relationship(
+        back_populates="despesas_medicas"
     )

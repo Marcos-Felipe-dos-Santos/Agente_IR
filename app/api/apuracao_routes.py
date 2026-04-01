@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models.entities import Contribuinte
 from app.schemas.apuracao import RelatorioAnualBase
-from app.services.tax_engine import apurar_meses_b3, auditar_cripto_vendas
+from app.services.tax_engine import apurar_meses_b3, auditar_cripto_vendas, auditar_trabalho_saude, avaliar_variacao_patrimonial
 import logging
 
 logger = logging.getLogger(__name__)
@@ -61,7 +61,27 @@ def get_relatorio_anual(
             detail=f"Falha ao auditar limites de criptomoedas: {e}"
         )
 
-    # 3. Consolidar Totais
+    # 3. Auditoria Saúde e Salários
+    try:
+        dados_assalariado = auditar_trabalho_saude(contribuinte_id, ano, db)
+    except Exception as e:
+        logger.exception("Erro na engine matemática (Saúde)")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Falha ao auditar despesas médicas e salariais: {e}"
+        )
+
+    # 4. Auditoria Patrimonial (Fluxo de Evolução)
+    try:
+        variacao = avaliar_variacao_patrimonial(contribuinte_id, ano, db)
+    except Exception as e:
+        logger.exception("Erro na engine matemática (Variação Patrimonial)")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Falha ao processar Renda a Descoberto: {e}"
+        )
+
+    # 5. Consolidar Totais
     total_isento = sum((float(item["lucro_isento"]) for item in meses_apurados))
     total_tributavel = sum((float(item["lucro_tributavel"]) for item in meses_apurados))
     total_imposto = sum((float(item["imposto_devido"]) for item in meses_apurados))
@@ -74,5 +94,8 @@ def get_relatorio_anual(
         "total_lucro_tributavel_ano": f"{total_tributavel:.2f}",
         "total_imposto_devido_ano": f"{total_imposto:.2f}",
         "saldo_prejuizo_a_compensar_final_ano": f"{prejuizo_final:.2f}",
-        "alertas_cripto": alertas_cripto
+        "alertas_cripto": alertas_cripto,
+        "dados_trabalho_assalariado_e_saude": dados_assalariado,
+        "evolucao_patrimonial": variacao.get("evolucao_patrimonial"),
+        "fluxo_caixa": variacao.get("fluxo_caixa")
     }

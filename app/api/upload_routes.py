@@ -154,9 +154,12 @@ async def upload_informe_pdf(
         cnpj_fonte=result.cnpj_fonte,
         razao_social=result.razao_social,
         ano_calendario=result.ano_calendario,
+        tipo_informe=result.tipo_informe,
         rendimentos_inseridos=result.rendimentos_inseridos,
         saldos_atualizados=result.saldos_atualizados,
         erros=result.erros,
         rendimentos=result.rendimentos_detalhe,
         saldos=result.saldos_detalhe,
+        rendimento_trabalho=result.rendimento_trabalho_detalhe,
+        despesas_medicas=result.despesas_medicas_detalhe,
     )

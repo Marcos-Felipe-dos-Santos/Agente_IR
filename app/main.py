@@ -10,6 +10,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import router
 from app.api.upload_routes import router as upload_router
 from app.api.apuracao_routes import router as apuracao_router
+from app.api.advisor_routes import router as advisor_router
+from app.api.relatorios_routes import router as relatorios_router
+from app.api.auditoria_routes import router as auditoria_router
 from app.core.config import APP_TITLE, APP_VERSION
 from app.core.database import init_db
 
@@ -33,6 +36,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",  # Padrão Vite
         "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
         "http://localhost:3000",  # Alternativa (se mudar porta)
     ],
     allow_credentials=True,
@@ -43,6 +48,9 @@ app.add_middleware(
 app.include_router(router, prefix="/api/v1")
 app.include_router(upload_router, prefix="/api/v1")
 app.include_router(apuracao_router, prefix="/api/v1")
+app.include_router(advisor_router, prefix="/api/v1")
+app.include_router(relatorios_router, prefix="/api/v1")
+app.include_router(auditoria_router, prefix="/api/v1")
 
 
 @app.get("/health", tags=["Sistema"])

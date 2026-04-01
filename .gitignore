@@ -48,3 +48,19 @@ pnpm-debug.log*
 .env.development.local
 .env.test.local
 .env.production.local
+
+# ── Específicos do Agent IR ──
+mock_receita_pre_preenchida.json
+uploads/
+.temp/
+*.pdf
+*.csv
+*.xlsx
+
+# Dependências aninhadas
+frontend-agente/node_modules/
+frontend-agente/dist/
+frontend-agente/.env*
+
+# OS
+Thumbs.db

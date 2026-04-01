@@ -24,7 +24,13 @@ import pdfplumber
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.entities import ContaBancaria, Contribuinte, RendimentoInforme
+from app.models.entities import (
+    ContaBancaria,
+    Contribuinte,
+    RendimentoInforme,
+    RendimentoTrabalho,
+    DespesaMedica,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +176,43 @@ _TIPO_CONTA_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Seções Específicas de Holerite/Trabalho
+_SECTION_HOLERITE = re.compile(
+    r"RENDIMENTOS\s+TRIBUT[ÁA]VEIS[(,\s]*DEDU[ÇC][ÕO]ES\s+E\s+IMPOSTO\s+RETIDO\s+NA\s+FONTE",
+    re.IGNORECASE,
+)
+
+_SALARIO_PATTERN = re.compile(
+    r"3\.1[\s\.\-]*Total dos rendimentos[^\n]{0,40}?"
+    r"(?:R?\$?\s*(?:[\d.,]+(?:,\d{2}))\s*)?" # Ignorar coluna valor da página anterior
+    r"R?\$?\s*([\d.]+(?:,\d{2}))",
+    re.IGNORECASE,
+)
+
+_INSS_PATTERN = re.compile(
+    r"3\.2[\s\.\-]*Contribui[çc][ãa]o previdenci[áa]ria[^\n]{0,40}?"
+    r"(?:R?\$?\s*(?:[\d.,]+(?:,\d{2}))\s*)?"
+    r"R?\$?\s*([\d.]+(?:,\d{2}))",
+    re.IGNORECASE,
+)
+
+_IRRF_HOLERITE_PATTERN = re.compile(
+    r"3\.5[\s\.\-]*Imposto(?: de renda)? retido na fonte[^\n]{0,40}?"
+    r"(?:R?\$?\s*(?:[\d.,]+(?:,\d{2}))\s*)?"
+    r"R?\$?\s*([\d.]+(?:,\d{2}))",
+    re.IGNORECASE,
+)
+
+# Quadro 7 - Gulosa para Saúde, capturando a palavra, seguida por CNPJ em até 100 caracteres, seguida por Valor
+_SAUDE_GULOSA_PATTERN = re.compile(
+    r"(?:sa[úu]de|m[ée]dic[a-z]{1,4}|unimed|bradesco|amil|odont[a-z]{0,4}|hospital|cl[íi]nica)"
+    r"[^\n]{0,100}?"
+    r"(?P<cnpj>\d{2}[\s.]*\d{3}[\s.]*\d{3}[\s/]*\d{4}[\s-]*\d{2})"
+    r"[^\n]{0,80}?"
+    r"R?\$?\s*(?P<valor>[\d.]+(?:,\d{2}))",
+    re.IGNORECASE,
+)
+
 
 # ═══════════════════════════════════════════════════════════════════
 #  Estruturas de dados
@@ -192,13 +235,31 @@ class SaldoExtraido:
 
 
 @dataclass
+class RendimentoTrabalhoExtraido:
+    """Holerite Anual Salários."""
+    rendimento_tributavel: Decimal = Decimal("0.00")
+    contribuicao_previdenciaria: Decimal = Decimal("0.00")
+    irrf: Decimal = Decimal("0.00")
+
+@dataclass
+class DespesaMedicaExtraido:
+    """Despesa Médica CNPJ Saúde."""
+    cnpj_prestador: str
+    razao_social_prestador: str
+    valor_pago: Decimal
+
+
+@dataclass
 class InformeExtraido:
     """Resultado completo da extração de um PDF."""
+    tipo_informe: str = "banco_corretora"
     cnpj_fonte: str | None = None
     razao_social: str | None = None
     ano_calendario: int | None = None
     rendimentos: list[RendimentoExtraido] = field(default_factory=list)
     saldos: list[SaldoExtraido] = field(default_factory=list)
+    rendimento_trabalho: RendimentoTrabalhoExtraido | None = None
+    despesas_medicas: list[DespesaMedicaExtraido] = field(default_factory=list)
     texto_bruto: str = ""
     erros: list[str] = field(default_factory=list)
 
@@ -206,6 +267,7 @@ class InformeExtraido:
 @dataclass
 class InformeImportResult:
     """Resultado final: extração + persistência."""
+    tipo_informe: str = "banco_corretora"
     cnpj_fonte: str | None = None
     razao_social: str | None = None
     ano_calendario: int | None = None
@@ -214,6 +276,8 @@ class InformeImportResult:
     erros: list[str] = field(default_factory=list)
     rendimentos_detalhe: list[dict] = field(default_factory=list)
     saldos_detalhe: list[dict] = field(default_factory=list)
+    rendimento_trabalho_detalhe: dict | None = None
+    despesas_medicas_detalhe: list[dict] = field(default_factory=list)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -454,34 +518,76 @@ def parse_informe_text(text: str) -> InformeExtraido:
     if not result.ano_calendario:
         result.erros.append("Ano-calendário não encontrado")
 
-    # ── 2. Rendimentos tributação exclusiva ──────────────────────────
-    section = _find_section_text(normalized, _SECTION_TRIB_EXCLUSIVA)
-    if section:
-        rends = _extract_rendimentos_from_section(section, "tributacao_exclusiva")
-        result.rendimentos.extend(rends)
+    # Detecta se é Holerite de Trabalho
+    if _SECTION_HOLERITE.search(normalized):
+        result.tipo_informe = "trabalho_assalariado"
+        result.rendimento_trabalho = RendimentoTrabalhoExtraido()
+        
+        salario = _SALARIO_PATTERN.search(normalized)
+        if salario:
+            parsed = _parse_br_money(salario.group(1))
+            if parsed: result.rendimento_trabalho.rendimento_tributavel = parsed
+            
+        inss = _INSS_PATTERN.search(normalized)
+        if inss:
+            parsed = _parse_br_money(inss.group(1))
+            if parsed: result.rendimento_trabalho.contribuicao_previdenciaria = parsed
+            
+        irrf = _IRRF_HOLERITE_PATTERN.search(normalized)
+        if irrf:
+            parsed = _parse_br_money(irrf.group(1))
+            if parsed: result.rendimento_trabalho.irrf = parsed
+
+        # Busca Gulosa por Saúde
+        for saude_match in _SAUDE_GULOSA_PATTERN.finditer(normalized):
+            # CNPJ raw foi capturado pelas regex. Só precisamos retirar caracteres nulos..
+            raw_cnpj = saude_match.group("cnpj")
+            digits = re.sub(r"[^\d]", "", raw_cnpj)
+            if len(digits) == 14:
+                cnpj = f"{digits[:2]}.{digits[2:5]}.{digits[5:8]}/{digits[8:12]}-{digits[12:14]}"
+            else:
+                cnpj = None
+                
+            valor = _parse_br_money(saude_match.group("valor"))
+            if cnpj and valor and valor > 0:
+                result.despesas_medicas.append(DespesaMedicaExtraido(
+                    cnpj_prestador=cnpj,
+                    razao_social_prestador="Prestador de Saúde Identificado por IA Textual",
+                    valor_pago=valor
+                ))
+
+        if result.rendimento_trabalho.rendimento_tributavel == Decimal("0.00"):
+            result.erros.append("Holerite de Trabalho detectado, mas Salário 3.1 não foi lido com nitidez.")
+        
     else:
-        result.erros.append(
-            "Seção 'Rendimentos Tributação Exclusiva/Definitiva' não encontrada"
-        )
+        # ── 2. Rendimentos tributação exclusiva (Bancos) ────────────────
+        section = _find_section_text(normalized, _SECTION_TRIB_EXCLUSIVA)
+        if section:
+            rends = _extract_rendimentos_from_section(section, "tributacao_exclusiva")
+            result.rendimentos.extend(rends)
+        else:
+            result.erros.append(
+                "Seção 'Rendimentos Tributação Exclusiva/Definitiva' não encontrada"
+            )
 
-    # ── 3. Rendimentos isentos ──────────────────────────────────────
-    section = _find_section_text(normalized, _SECTION_ISENTOS)
-    if section:
-        rends = _extract_rendimentos_from_section(section, "isento")
-        result.rendimentos.extend(rends)
-    else:
-        result.erros.append(
-            "Seção 'Rendimentos Isentos e Não Tributáveis' não encontrada"
-        )
+        # ── 3. Rendimentos isentos ──────────────────────────────────────
+        section = _find_section_text(normalized, _SECTION_ISENTOS)
+        if section:
+            rends = _extract_rendimentos_from_section(section, "isento")
+            result.rendimentos.extend(rends)
+        else:
+            result.erros.append(
+                "Seção 'Rendimentos Isentos e Não Tributáveis' não encontrada"
+            )
 
-    # ── 4. Rendimentos tributáveis (opcional, nem todo informe tem) ──
-    section = _find_section_text(normalized, _SECTION_TRIBUTAVEL)
-    if section:
-        rends = _extract_rendimentos_from_section(section, "tributavel")
-        result.rendimentos.extend(rends)
+        # ── 4. Rendimentos tributáveis (opcional, nem todo informe tem) ──
+        section = _find_section_text(normalized, _SECTION_TRIBUTAVEL)
+        if section:
+            rends = _extract_rendimentos_from_section(section, "tributavel")
+            result.rendimentos.extend(rends)
 
-    # ── 5. Saldos ───────────────────────────────────────────────────
-    result.saldos = _extract_saldos(normalized)
+        # ── 5. Saldos ───────────────────────────────────────────────────
+        result.saldos = _extract_saldos(normalized)
 
     return result
 
@@ -618,29 +724,75 @@ def ingest_informe_pdf(
 
     # Parse do texto
     informe = parse_informe_text(text)
+    result.tipo_informe = informe.tipo_informe
     result.cnpj_fonte = informe.cnpj_fonte
     result.razao_social = informe.razao_social
     result.ano_calendario = informe.ano_calendario
     result.erros.extend(informe.erros)
 
-    # Persist rendimentos
-    result.rendimentos_inseridos = _persist_rendimentos(informe, contribuinte_id, db)
-    for rend in informe.rendimentos:
-        result.rendimentos_detalhe.append({
-            "categoria": rend.categoria,
-            "descricao": rend.descricao,
-            "valor": str(rend.valor),
-            "irrf": str(rend.irrf),
-        })
+    if informe.tipo_informe == "trabalho_assalariado":
+        # Delete old worker records for this source/ano
+        db.execute(
+            select(RendimentoTrabalho).where(
+                RendimentoTrabalho.contribuinte_id == contribuinte_id,
+                RendimentoTrabalho.cnpj_fonte == informe.cnpj_fonte,
+                RendimentoTrabalho.ano_calendario == informe.ano_calendario
+            )
+        ) # Actually, it's safer to not delete and just upsert/create
+        
+        # We will just create:
+        if informe.rendimento_trabalho:
+            obj_trabalho = RendimentoTrabalho(
+                contribuinte_id=contribuinte_id,
+                cnpj_fonte=informe.cnpj_fonte or "00.000.000/0000-00",
+                razao_social_fonte=informe.razao_social or "Empresa Desconhecida",
+                ano_calendario=informe.ano_calendario or 2024,
+                rendimento_tributavel=informe.rendimento_trabalho.rendimento_tributavel,
+                contribuicao_previdenciaria=informe.rendimento_trabalho.contribuicao_previdenciaria,
+                irrf=informe.rendimento_trabalho.irrf,
+            )
+            db.add(obj_trabalho)
+            result.rendimentos_inseridos += 1
+            result.rendimento_trabalho_detalhe = {
+                "rendimento_tributavel": str(informe.rendimento_trabalho.rendimento_tributavel),
+                "contribuicao_previdenciaria": str(informe.rendimento_trabalho.contribuicao_previdenciaria),
+                "irrf": str(informe.rendimento_trabalho.irrf)
+            }
+        
+        for saude in informe.despesas_medicas:
+            obj_saude = DespesaMedica(
+                contribuinte_id=contribuinte_id,
+                cnpj_prestador=saude.cnpj_prestador,
+                razao_social_prestador=saude.razao_social_prestador,
+                ano_calendario=informe.ano_calendario or 2024,
+                valor_pago=saude.valor_pago
+            )
+            db.add(obj_saude)
+            result.despesas_medicas_detalhe.append({
+                "cnpj_prestador": saude.cnpj_prestador,
+                "nome_prestador": saude.razao_social_prestador,
+                "valor_pago": str(saude.valor_pago)
+            })
+            
+    else:
+        # Persist rendimentos Financeiros
+        result.rendimentos_inseridos = _persist_rendimentos(informe, contribuinte_id, db)
+        for rend in informe.rendimentos:
+            result.rendimentos_detalhe.append({
+                "categoria": rend.categoria,
+                "descricao": rend.descricao,
+                "valor": str(rend.valor),
+                "irrf": str(rend.irrf),
+            })
 
-    # Persist saldos
-    result.saldos_atualizados = _persist_saldos(informe, contribuinte_id, db)
-    for saldo in informe.saldos:
-        result.saldos_detalhe.append({
-            "tipo_conta": saldo.tipo_conta,
-            "ano": saldo.ano,
-            "valor": str(saldo.valor),
-        })
+        # Persist saldos
+        result.saldos_atualizados = _persist_saldos(informe, contribuinte_id, db)
+        for saldo in informe.saldos:
+            result.saldos_detalhe.append({
+                "tipo_conta": saldo.tipo_conta,
+                "ano": saldo.ano,
+                "valor": str(saldo.valor),
+            })
 
     db.commit()
     return result
