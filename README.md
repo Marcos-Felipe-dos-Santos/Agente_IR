@@ -43,6 +43,12 @@ python -m venv venv
 source venv/bin/activate  # ou .\venv\Scripts\activate no Windows
 pip install -r requirements.txt
 python seed.py  # Atenção: Cria banco SQLite local (Não criptografado)
+
+> ⚠️ **Atenção:** O banco de dados SQLite **não é criptografado**. Se sua máquina 
+> possui serviços de backup automático em nuvem (Google Drive, OneDrive, iCloud), 
+> certifique-se de que a pasta do projeto está **excluída** da sincronização para 
+> evitar que dados financeiros sejam enviados para servidores externos.
+
 uvicorn app.main:app --reload --port 8000
 
 # 2. Front-End (Em outro terminal)

@@ -64,3 +64,9 @@ frontend-agente/.env*
 
 # OS
 Thumbs.db
+
+# Artefatos de execução de testes — não commitar
+pytest_*.txt
+*.txt
+!README.md
+

@@ -1,16 +1,5 @@
 """
 Teste Fase 3 — Parser de Informe de Rendimentos PDF (migrado para pytest).
-
-Verifica:
-  1. Extração de CNPJ (inclusive com quebras de linha)
-  2. Extração de Razão Social
-  3. Extração de Ano-Calendário
-  4. Rendimentos Tributação Exclusiva
-  5. Rendimentos Isentos
-  6. Saldos em 31/12 (anterior e atual)
-  7. Conversão monetária BR → Decimal
-  8. Persistência no banco (RendimentoInforme + ContaBancaria)
-  9. Resiliência a quebras de linha inesperadas de PDF
 """
 import pytest
 from datetime import date
@@ -21,7 +10,6 @@ from sqlalchemy import delete, select
 from app.core.database import init_db, SessionLocal
 from app.models.entities import ContaBancaria, Contribuinte, RendimentoInforme
 from app.services.pdf_parser import parse_informe_text, _persist_rendimentos, _persist_saldos
-# Helpers extraídos através das novas estratégias (acesso via generic)
 from app.services.pdf_strategies.generic import (
     _parse_br_money,
     _extract_cnpj_raw as _extract_cnpj,
@@ -29,39 +17,40 @@ from app.services.pdf_strategies.generic import (
     _extract_rendimentos_from_section,
     _extract_saldos_from_text,
 )
-from app.services.pdf_strategies.generic import _parse_br_money
 
-
-@pytest.fixture(scope="session", autouse=True)
-def setup_db_pdf():
+@pytest.fixture(scope="module")
+def db_pdf_engine():
     init_db()
+    db = SessionLocal()
+    yield db
+    db.close()
 
 
-@pytest.fixture
-def db_pdf():
-    session = SessionLocal()
-    session.execute(delete(RendimentoInforme))
-    session.execute(delete(ContaBancaria))
-    session.execute(delete(Contribuinte))
-    session.commit()
-    yield session
-    session.close()
+@pytest.fixture(scope="module")
+def contribuinte_pdf(db_pdf_engine):
+    db = db_pdf_engine
+    db.execute(delete(RendimentoInforme))
+    db.execute(delete(ContaBancaria))
+    db.execute(delete(Contribuinte))
+    db.commit()
 
-
-@pytest.fixture
-def contrib_pdf(db_pdf):
     contrib = Contribuinte(
-        cpf="000.000.004-00",  # CPF fictício para teste
+        cpf="000.000.004-00",
         nome_completo="Teste PDF Parser",
         data_nascimento=date(1985, 3, 20),
         ano_exercicio=2025,
     )
-    db_pdf.add(contrib)
-    db_pdf.commit()
-    return contrib
+    db.add(contrib)
+    db.commit()
+    cid = contrib.id
 
+    yield contrib
 
-# ─── Fixtures de texto simulado ───────────────────────────────────────────────
+    db.execute(delete(RendimentoInforme))
+    db.execute(delete(ContaBancaria))
+    db.execute(delete(Contribuinte))
+    db.commit()
+
 
 MOCK_INFORME = """
 INFORME DE RENDIMENTOS FINANCEIROS
@@ -123,9 +112,6 @@ Conta Corrente
 31/12/2024  3.800,00
 """
 
-
-# ─── Testes unitários: _parse_br_money ────────────────────────────────────────
-
 @pytest.mark.parametrize("raw,expected", [
     ("R$ 1.500,00",  Decimal("1500.00")),
     ("1.234,56",     Decimal("1234.56")),
@@ -141,9 +127,6 @@ Conta Corrente
 def test_parse_br_money(raw, expected):
     assert _parse_br_money(raw) == expected
 
-
-# ─── Testes unitários: _extract_cnpj ─────────────────────────────────────────
-
 @pytest.mark.parametrize("text,expected", [
     ("CNPJ: 00.000.000/0001-91",          "00.000.000/0001-91"),
     ("CNPJ/MF: 33.592.510/0001-54",       "33.592.510/0001-54"),
@@ -153,9 +136,6 @@ def test_parse_br_money(raw, expected):
 ])
 def test_extract_cnpj(text, expected):
     assert _extract_cnpj(text) == expected
-
-
-# ─── Testes unitários: _extract_razao_social ──────────────────────────────────
 
 @pytest.mark.parametrize("text,expected", [
     ("RAZÃO SOCIAL: BANCO DO BRASIL S.A.\nCNPJ",                "BANCO DO BRASIL S.A"),
@@ -167,31 +147,25 @@ def test_extract_razao_social(text, expected):
     assert _extract_razao_social(text) == expected
 
 
-# ─── Testes de integração: parse_informe_text ─────────────────────────────────
-
 def test_parse_informe_cabecalho():
     result = parse_informe_text(MOCK_INFORME)
     assert result.cnpj_fonte == "00.000.000/0001-91"
     assert result.razao_social == "BANCO DO BRASIL S.A"
     assert result.ano_calendario == 2024
 
-
 def test_parse_informe_rendimentos_tributacao_exclusiva():
     result = parse_informe_text(MOCK_INFORME)
     trib = [r for r in result.rendimentos if r.categoria == "tributacao_exclusiva"]
     assert len(trib) >= 2
-
 
 def test_parse_informe_rendimentos_isentos():
     result = parse_informe_text(MOCK_INFORME)
     isentos = [r for r in result.rendimentos if r.categoria == "isento"]
     assert len(isentos) >= 2
 
-
 def test_parse_informe_saldos():
     result = parse_informe_text(MOCK_INFORME)
     assert len(result.saldos) >= 2
-
 
 def test_parse_informe_quebrado_resiliencia():
     result = parse_informe_text(MOCK_INFORME_QUEBRADO)
@@ -201,27 +175,23 @@ def test_parse_informe_quebrado_resiliencia():
     assert len(result.rendimentos) >= 2
     assert len(result.saldos) >= 2
 
-
-# ─── Teste de persistência ────────────────────────────────────────────────────
-
-def test_persistencia_rendimentos(db_pdf, contrib_pdf):
+def test_persistencia_rendimentos(db_pdf_engine, contribuinte_pdf):
     informe = parse_informe_text(MOCK_INFORME)
-    count = _persist_rendimentos(informe, contrib_pdf.id, db_pdf)
-    db_pdf.commit()
+    count = _persist_rendimentos(informe, contribuinte_pdf.id, db_pdf_engine)
+    db_pdf_engine.commit()
 
-    rends_db = list(db_pdf.scalars(
-        select(RendimentoInforme).where(RendimentoInforme.contribuinte_id == contrib_pdf.id)
+    rends_db = list(db_pdf_engine.scalars(
+        select(RendimentoInforme).where(RendimentoInforme.contribuinte_id == contribuinte_pdf.id)
     ).all())
     assert len(rends_db) == count
 
-
-def test_persistencia_saldos_corrente(db_pdf, contrib_pdf):
+def test_persistencia_saldos_corrente(db_pdf_engine, contribuinte_pdf):
     informe = parse_informe_text(MOCK_INFORME)
-    _persist_saldos(informe, contrib_pdf.id, db_pdf)
-    db_pdf.commit()
+    _persist_saldos(informe, contribuinte_pdf.id, db_pdf_engine)
+    db_pdf_engine.commit()
 
-    contas = list(db_pdf.scalars(
-        select(ContaBancaria).where(ContaBancaria.contribuinte_id == contrib_pdf.id)
+    contas = list(db_pdf_engine.scalars(
+        select(ContaBancaria).where(ContaBancaria.contribuinte_id == contribuinte_pdf.id)
     ).all())
     assert len(contas) >= 1
 

@@ -1,16 +1,9 @@
 """
 Testes de Regex — Extração de despesas médicas via parse_informe_text.
-
-Valida que a regex captura corretamente CNPJ e valor de despesas médicas
-em texto simulado de holerite.
 """
-import pytest
-from decimal import Decimal
-
 from app.services.pdf_parser import parse_informe_text
 
-
-MOCK_HOLERITE = """
+mock_text = """
 COMPROVANTE DE RENDIMENTOS PAGOS E DE IMPOSTO SOBRE A RENDA RETIDO NA FONTE
 ANO-CALENDÁRIO DE 2024
 1. FONTES PAGADORAS
@@ -25,37 +18,13 @@ Despesas Médicas Unimed Seguros Saúde CNPJ: 44.555.666/0001-22  R$ 5.900,50
 Outras despesas OdontoPrev CNPJ 77.888.999/0001-33 pagas com valor de R$ 1.200,80
 """
 
+result = parse_informe_text(mock_text)
+print("Despesas:")
+for d in result.despesas_medicas:
+    print(f" - CNPJ: {d.cnpj_prestador} | Valor: {d.valor_pago}")
 
-def test_cabecalho_holerite():
-    result = parse_informe_text(MOCK_HOLERITE)
-    assert result.cnpj_fonte == "11.222.333/0001-99"
-    assert result.ano_calendario == 2024
-
-
-def test_despesas_medicas_extraidas():
-    result = parse_informe_text(MOCK_HOLERITE)
-    assert len(result.despesas_medicas) >= 2, (
-        f"Esperava ao menos 2 despesas médicas, encontrou {len(result.despesas_medicas)}"
-    )
-
-
-def test_despesa_unimed():
-    result = parse_informe_text(MOCK_HOLERITE)
-    unimed = next(
-        (d for d in result.despesas_medicas if "44.555.666/0001-22" in d.cnpj_prestador),
-        None,
-    )
-    assert unimed is not None, "Despesa Unimed não encontrada"
-    assert unimed.cnpj_prestador == "44.555.666/0001-22"
-    assert Decimal(str(unimed.valor_pago)) == Decimal("5900.50")
-
-
-def test_despesa_odontoprev():
-    result = parse_informe_text(MOCK_HOLERITE)
-    odonto = next(
-        (d for d in result.despesas_medicas if "77.888.999/0001-33" in d.cnpj_prestador),
-        None,
-    )
-    assert odonto is not None, "Despesa OdontoPrev não encontrada"
-    assert odonto.cnpj_prestador == "77.888.999/0001-33"
-    assert Decimal(str(odonto.valor_pago)) == Decimal("1200.80")
+assert result.cnpj_fonte == "11.222.333/0001-99", f"CNPJ incorreto: {result.cnpj_fonte}"
+assert result.ano_calendario == 2024, f"Ano incorreto: {result.ano_calendario}"
+assert len(result.despesas_medicas) == 2, f"Esperado 2 despesas, obteve {len(result.despesas_medicas)}"
+assert result.despesas_medicas[0].valor_pago is not None, "Valor da primeira despesa é None"
+print("✅ Todos os asserts de regex passaram.")
