@@ -1,0 +1,14 @@
+﻿============================= test session starts =============================
+platform win32 -- Python 3.11.9, pytest-9.0.2, pluggy-1.6.0
+rootdir: E:\projetos\agent_IR
+plugins: anyio-4.13.0, asyncio-1.3.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 63 items
+
+test_b3_parser.py .....................                                  [ 33%]
+test_parser_factory.py .........                                         [ 47%]
+test_pdf_parser.py ..........................                            [ 88%]
+test_structure.py .....                                                  [ 96%]
+test_tax_engine.py ..                                                    [100%]
+
+============================= 63 passed in 1.45s ==============================
